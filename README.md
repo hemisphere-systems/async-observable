@@ -27,7 +27,7 @@ use async_observable::Observable;
 #[async_std::main]
 async fn main() {
     let mut observable = Observable::new(0);
-    let mut fork = observable.fork();
+    let mut fork = observable.clone();
 
     observable.publish(1);
 
@@ -44,7 +44,7 @@ use async_observable::Observable;
 #[async_std::main]
 async fn main() {
     let mut observable = Observable::new(0);
-    let mut fork = observable.fork();
+    let mut fork = observable.clone();
 
     let task = spawn(async move {
         loop {
@@ -81,8 +81,8 @@ use futures::join;
 #[async_std::main]
 async fn main() {
     let mut execute = Observable::new(false);
-    let mut execute_fork_one = execute.fork();
-    let mut execute_fork_two = execute.fork();
+    let mut execute_fork_one = execute.clone();
+    let mut execute_fork_two = execute.clone();
 
     let task_one = spawn(async move {
         println!("task one started");

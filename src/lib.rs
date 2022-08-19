@@ -24,7 +24,7 @@
 //!     let mut tasks = vec![];
 //!
 //!     for i in 0..10 {
-//!         let mut fork = observable.fork();
+//!         let mut fork = observable.clone();
 //!
 //!         tasks.push(spawn(async move {
 //!             let update = fork.next().await;
@@ -52,7 +52,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-/// Wraps a value and lets you fork the value to synchronize it between tasks and threads.
+/// Wraps a value and lets you fork the state to synchronize it between tasks and threads.
 ///
 /// ## Creating New Observables
 /// There are several ways to create a new observable, altough using the `new` function should be
@@ -82,7 +82,7 @@ use std::{
 /// # use async_observable::Observable;
 /// # async {
 /// let mut observable = Observable::new(0);
-/// let mut fork = observable.fork();
+/// let mut fork = observable.clone();
 ///
 /// observable.publish(1);
 /// observable.publish(2);
@@ -139,7 +139,7 @@ where
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork();
+    /// let mut fork = observable.clone();
     ///
     /// observable.modify_conditional(|i| *i == 0, |i| *i = 1); // modify
     /// assert_eq!(fork.next().await, 1);
@@ -182,7 +182,7 @@ where
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork();
+    /// let mut fork = observable.clone();
     ///
     /// observable.apply(|value| {
     ///     *value = 1;
@@ -214,34 +214,19 @@ where
         true
     }
 
-    /// Create a new observable from this observable. Both will listen to the same underlying value.
-    ///
-    /// ```rust
-    /// # use async_observable::Observable;
-    /// # async {
-    /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork();
-    ///
-    /// fork.next().await; // runs forever!
-    /// # };
-    /// ```
-    pub fn fork(&self) -> Observable<T> {
-        self.clone()
-    }
-
-    /// Same as fork, but *the reset causes the fork to instantly have a change available* with the
+    /// Same as clone, but *the reset causes the fork to instantly have a change available* with the
     /// current state.
     ///
     /// ```rust
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork_and_reset();
+    /// let mut fork = observable.clone_and_reset();
     ///
     /// assert_eq!(fork.next().await, 0);
     /// # };
     /// ```
-    pub fn fork_and_reset(&self) -> Observable<T> {
+    pub fn clone_and_reset(&self) -> Observable<T> {
         Self {
             inner: self.inner.clone(),
             version: 0,
@@ -254,7 +239,7 @@ where
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork_and_reset();
+    /// let mut fork = observable.clone_and_reset();
     ///
     /// observable.publish(1);
     ///
@@ -274,7 +259,7 @@ where
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork_and_reset();
+    /// let mut fork = observable.clone_and_reset();
     ///
     /// observable.publish(1);
     /// assert_eq!(fork.next().await, 1);
@@ -296,7 +281,7 @@ where
     /// # use async_observable::Observable;
     /// # async {
     /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.fork();
+    /// let mut fork = observable.clone();
     ///
     /// observable.publish(1);
     /// observable.publish(2);
@@ -498,7 +483,7 @@ mod test {
         #[test]
         async fn should_get_notified_sync() {
             let mut int = Observable::new(1);
-            let mut other = int.fork();
+            let mut other = int.clone();
 
             int.publish(2);
             assert_eq!(other.next().await, 2);
@@ -511,8 +496,8 @@ mod test {
         #[test]
         async fn should_get_notified_sync_multiple() {
             let mut int = Observable::new(1);
-            let mut fork_one = int.fork();
-            let mut fork_two = int.fork();
+            let mut fork_one = int.clone();
+            let mut fork_two = int.clone();
 
             int.publish(2);
             assert_eq!(fork_one.next().await, 2);
@@ -530,7 +515,7 @@ mod test {
         #[test]
         async fn should_publish_after_modify() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.modify(|i| *i += 1);
             assert_eq!(fork.next().await, 2);
@@ -591,7 +576,7 @@ mod test {
         #[test]
         async fn should_skip_versions() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
             int.publish(3);
@@ -603,7 +588,7 @@ mod test {
         #[test]
         async fn should_wait_after_skiped_versions() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
             int.publish(3);
@@ -616,7 +601,7 @@ mod test {
         #[test]
         async fn should_skip_unchecked_updates() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
             assert_eq!(fork.next().await, 2);
@@ -633,7 +618,7 @@ mod test {
         #[test]
         async fn should_wait_for_publisher_task() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             spawn(async move {
                 sleep(SLEEP_DURATION).await;
@@ -657,7 +642,7 @@ mod test {
         #[test]
         async fn should_get_latest_without_loosing_updates() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
 
@@ -670,7 +655,7 @@ mod test {
         #[test]
         async fn should_skip_updates_while_synchronizing() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
             int.publish(3);
@@ -683,7 +668,7 @@ mod test {
         #[test]
         async fn should_synchronize_multiple_times() {
             let mut int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             int.publish(2);
             int.publish(3);
@@ -706,7 +691,7 @@ mod test {
         #[test]
         async fn should_remove_waker_on_future_drop() {
             let int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             for _ in 0..100 {
                 timeout(Duration::from_millis(10), fork.next()).await.ok();
@@ -718,7 +703,7 @@ mod test {
         #[test]
         async fn should_wait_forever() {
             let int = Observable::new(1);
-            let mut fork = int.fork();
+            let mut fork = int.clone();
 
             assert!(timeout(TIMEOUT_DURATION, fork.next()).await.is_err());
         }

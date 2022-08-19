@@ -7,7 +7,7 @@ async fn main() {
     let mut tasks = vec![];
 
     for i in 0..10 {
-        let mut fork = observable.fork();
+        let mut fork = observable.clone();
 
         tasks.push(spawn(async move {
             let update = fork.next().await;
