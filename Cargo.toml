@@ -1,9 +1,8 @@
 [package]
 name = "async-observable"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2018"
 description = "Async & reactive synchronization model to keep multiple async tasks / threads partially synchronized."
-
 authors = [
     "Mara Schulke <mara.schulke@hum-systems.com>",
     "Florian Uekermann <florian.uekermann@hum-systems.com>"
@@ -16,7 +15,7 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-futures = "0.3.0"
+futures = "0.3"
 
 [dev-dependencies]
 async-std = { version = "1.12.0", features = [ "attributes" ] }

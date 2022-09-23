@@ -302,6 +302,27 @@ where
         value
     }
 
+    /// Splits the observable into two handles to the same value
+    ///
+    /// This is very useful if you are spawning threads or tasks which get an
+    /// owned instance of the observable
+    ///
+    /// ```rust
+    /// # use async_observable::Observable;
+    /// # async {
+    /// let (mut main, mut task) = Observable::new(0).split();
+    ///
+    /// async_std::task::spawn(async move {
+    ///     task.publish(1);
+    /// });
+    ///
+    /// assert_eq!(main.next().await, 1);
+    /// # };
+    /// ```
+    pub fn split(self) -> (Self, Self) {
+        (self.clone(), self)
+    }
+
     pub(crate) fn lock(&self) -> MutexGuard<Inner<T>> {
         match self.inner.lock() {
             Ok(guard) => guard,
