@@ -26,12 +26,11 @@ use async_observable::Observable;
 
 #[async_std::main]
 async fn main() {
-    let mut observable = Observable::new(0);
-    let mut fork = observable.clone();
+    let (mut a, mut b) = Observable::new(0).split();
 
-    observable.publish(1);
+    a.publish(1);
 
-    assert_eq!(fork.wait().await, 1);
+    assert_eq!(b.wait().await, 1);
 }
 ```
 
@@ -43,12 +42,11 @@ use async_observable::Observable;
 
 #[async_std::main]
 async fn main() {
-    let mut observable = Observable::new(0);
-    let mut fork = observable.clone();
+    let (mut main, mut task) = Observable::new(0).split();
 
     let task = spawn(async move {
         loop {
-            let update = fork.next().await;
+            let update = task.next().await;
             println!("task received update {}", update);
 
             if update >= 3 {
@@ -57,11 +55,11 @@ async fn main() {
         }
     });
 
-    observable.publish(1);
+    main.publish(1);
     sleep(std::time::Duration::from_millis(100)).await;
-    observable.publish(2);
+    main.publish(2);
     sleep(std::time::Duration::from_millis(100)).await;
-    observable.publish(3);
+    main.publish(3);
 
     task.await;
 }

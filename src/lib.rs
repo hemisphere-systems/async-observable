@@ -170,26 +170,25 @@ where
     /// ```ignore
     /// # use async_observable::Observable;
     /// # async {
-    /// let mut observable = Observable::new(0);
+    /// let (mut a, mut b) = Observable::new(0).split();
     ///
-    /// observable.apply(|_| false); // Has no effect
+    /// a.apply(|_| false); // Has no effect
     ///
-    /// fork.next().await; // runs forever!
+    /// b.next().await; // runs forever!
     /// # };
     /// ```
     ///
     /// ```ignore
     /// # use async_observable::Observable;
     /// # async {
-    /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.clone();
+    /// let (mut a, mut b) = Observable::new(0).split();
     ///
-    /// observable.apply(|value| {
+    /// a.apply(|value| {
     ///     *value = 1;
     ///     true
     /// });
     ///
-    /// assert_eq!(fork.next().await, 1);
+    /// assert_eq!(b.next().await, 1);
     /// # };
     /// ```
     #[doc(hidden)]
@@ -258,16 +257,15 @@ where
     /// ```rust
     /// # use async_observable::Observable;
     /// # async {
-    /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.clone_and_reset();
+    /// let (mut a, mut b) = Observable::new(0).split();
     ///
-    /// observable.publish(1);
-    /// assert_eq!(fork.next().await, 1);
+    /// a.publish(1);
+    /// assert_eq!(b.next().await, 1);
     ///
-    /// observable.publish(2);
-    /// assert_eq!(fork.next().await, 2);
+    /// a.publish(2);
+    /// assert_eq!(b.next().await, 2);
     ///
-    /// fork.next().await; // runs forever!
+    /// b.next().await; // runs forever!
     /// # };
     /// ```
     pub async fn next(&mut self) -> T {
@@ -280,16 +278,15 @@ where
     /// ```rust
     /// # use async_observable::Observable;
     /// # async {
-    /// let mut observable = Observable::new(0);
-    /// let mut fork = observable.clone();
+    /// let (mut a, mut b) = Observable::new(0).split();
     ///
-    /// observable.publish(1);
-    /// observable.publish(2);
-    /// observable.publish(3);
+    /// a.publish(1);
+    /// a.publish(2);
+    /// a.publish(3);
     ///
-    /// assert_eq!(fork.synchronize(), 3);
+    /// assert_eq!(b.synchronize(), 3);
     ///
-    /// fork.next().await; // runs forever!
+    /// b.next().await; // runs forever!
     /// # };
     /// ```
     pub fn synchronize(&mut self) -> T {
