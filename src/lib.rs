@@ -352,6 +352,17 @@ where
     }
 }
 
+impl<T> PartialEq for Observable<T>
+where
+    T: Clone + PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.latest() == other.latest()
+    }
+}
+
+impl<T> Eq for Observable<T> where T: Clone + PartialEq + Eq {}
+
 impl<T> From<T> for Observable<T>
 where
     T: Clone,
