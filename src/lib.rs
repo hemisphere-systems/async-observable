@@ -387,6 +387,36 @@ where
     }
 }
 
+#[cfg(feature = "serde")]
+/// Serializes the observable to the latest value
+impl<T> serde::Serialize for Observable<T>
+where
+    T: serde::Serialize + Clone,
+{
+    #[inline]
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.latest().serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+/// Deserializes the value and wraps it into an observable
+impl<'de, T> serde::Deserialize<'de> for Observable<T>
+where
+    T: Clone + serde::Deserialize<'de>,
+{
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Into::into)
+    }
+}
+
 struct Inner<T>
 where
     T: Clone,
@@ -735,6 +765,54 @@ mod test {
             let mut fork = int.clone();
 
             assert!(timeout(TIMEOUT_DURATION, fork.next()).await.is_err());
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde {
+        use super::*;
+        use async_std::test;
+        use serde_derive::*;
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+        struct Foo {
+            uint: Observable<u8>,
+            string: Observable<String>,
+        }
+
+        #[test]
+        async fn should_serialize_and_deserialize() {
+            let data = Foo {
+                uint: 1.into(),
+                string: "bar".to_owned().into(),
+            };
+
+            let serialized: String = serde_json::to_string(&data).unwrap();
+            assert_eq!(serialized, r#"{"uint":1,"string":"bar"}"#);
+
+            let deserialized: Foo = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(
+                deserialized,
+                Foo {
+                    uint: 1.into(),
+                    string: "bar".to_owned().into()
+                }
+            );
+        }
+
+        #[test]
+        async fn should_serialize_latest() {
+            let (uint, mut other) = Observable::new(1).split();
+
+            let data = Foo {
+                uint,
+                string: "bar".to_owned().into(),
+            };
+
+            other.publish(2);
+
+            let serialized: String = serde_json::to_string(&data).unwrap();
+            assert_eq!(serialized, r#"{"uint":2,"string":"bar"}"#);
         }
     }
 }
