@@ -43,9 +43,9 @@
 //!     }
 //! }
 //! ```
-use futures::Future;
+use futures::stream::Stream;
+use slab::Slab;
 use std::{
-    collections::HashMap,
     fmt,
     ops::DerefMut,
     sync::{Arc, Mutex, MutexGuard},
@@ -104,6 +104,7 @@ where
 {
     inner: Arc<Mutex<Inner<T>>>,
     version: u128,
+    waker_id: Option<usize>,
 }
 
 impl<T> Observable<T>
@@ -115,6 +116,7 @@ where
         Observable {
             inner: Arc::new(Mutex::new(Inner::new(value))),
             version: 0,
+            waker_id: None,
         }
     }
 
@@ -204,8 +206,8 @@ where
 
         inner.version += 1;
 
-        for waker in inner.waker.values() {
-            waker.wake_by_ref();
+        for ref waker in inner.waker.iter() {
+            waker.1.wake_by_ref();
         }
 
         inner.waker.clear();
@@ -229,6 +231,7 @@ where
         Self {
             inner: self.inner.clone(),
             version: 0,
+            waker_id: None,
         }
     }
 
@@ -268,8 +271,11 @@ where
     /// b.next().await; // runs forever!
     /// # };
     /// ```
+    #[inline]
     pub async fn next(&mut self) -> T {
-        AwaitObservableUpdate::from(self).await
+        futures::StreamExt::next(self)
+            .await
+            .expect("internal implementation error: observable update streams cannot end")
     }
 
     /// Skip any potential updates and retrieve the latest version of the
@@ -387,6 +393,61 @@ where
     }
 }
 
+impl<T> Stream for Observable<T>
+where
+    T: Clone,
+{
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let mut guard = self.lock();
+        let inner = guard.deref_mut();
+
+        if self.version == inner.version {
+            if let Some(waker) = self.waker_id {
+                inner.waker.try_remove(waker);
+            }
+
+            let waker_id = inner.waker.insert(cx.waker().clone());
+
+            drop(guard);
+
+            self.waker_id = Some(waker_id);
+
+            Poll::Pending
+        } else {
+            if let Some(waker) = self.waker_id {
+                inner.waker.try_remove(waker);
+            }
+
+            let (version, value) = (inner.version, inner.value.clone());
+
+            drop(guard);
+
+            self.waker_id = None;
+            self.version = version;
+
+            Poll::Ready(Some(value))
+        }
+    }
+}
+
+impl<T> Drop for Observable<T>
+where
+    T: Clone,
+{
+    fn drop(&mut self) {
+        if let Some(waker) = self.waker_id {
+            let mut guard = self.lock();
+            let inner = guard.deref_mut();
+            inner.waker.try_remove(waker);
+        }
+    }
+}
+
 #[cfg(feature = "serde")]
 /// Serializes the observable to the latest value
 impl<T> serde::Serialize for Observable<T>
@@ -422,30 +483,20 @@ where
     T: Clone,
 {
     version: u128,
-    future_count: u128,
     value: T,
-    waker: HashMap<u128, Waker>,
+    waker: Slab<Waker>,
 }
 
 impl<T> Inner<T>
 where
     T: Clone,
 {
-    pub fn new(value: T) -> Self {
+    fn new(value: T) -> Self {
         Self {
             version: 0,
-            future_count: 0,
             value,
-            waker: HashMap::new(),
+            waker: Slab::new(),
         }
-    }
-
-    pub fn add_waker(&mut self, id: u128, waker: Waker) {
-        self.waker.insert(id, waker);
-    }
-
-    pub fn remove_waker(&mut self, id: u128) {
-        self.waker.remove(&id);
     }
 }
 
@@ -458,70 +509,6 @@ where
             .field("value", &self.value)
             .field("version", &self.version)
             .finish()
-    }
-}
-
-#[doc(hidden)]
-struct AwaitObservableUpdate<'a, T>
-where
-    T: Clone,
-{
-    id: u128,
-    observable: &'a mut Observable<T>,
-}
-
-impl<'a, T: Clone> From<&'a mut Observable<T>> for AwaitObservableUpdate<'a, T> {
-    fn from(obs: &'a mut Observable<T>) -> Self {
-        let id = {
-            let mut guard = obs.lock();
-            let mut inner = guard.deref_mut();
-            inner.future_count += 1;
-            inner.future_count
-        };
-
-        Self {
-            id,
-            observable: obs,
-        }
-    }
-}
-
-impl<'a, T> Future for AwaitObservableUpdate<'a, T>
-where
-    T: Clone,
-{
-    type Output = T;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        let mut guard = self.observable.lock();
-        let inner = guard.deref_mut();
-
-        if self.observable.version == inner.version {
-            inner.add_waker(self.id, cx.waker().clone());
-            Poll::Pending
-        } else {
-            inner.remove_waker(self.id);
-            let (version, value) = (inner.version, inner.value.clone());
-
-            drop(guard);
-
-            self.observable.version = version;
-            Poll::Ready(value)
-        }
-    }
-}
-
-impl<'a, T> Drop for AwaitObservableUpdate<'a, T>
-where
-    T: Clone,
-{
-    fn drop(&mut self) {
-        let mut guard = self.observable.lock();
-        let inner = guard.deref_mut();
-        inner.remove_waker(self.id);
     }
 }
 
@@ -748,13 +735,15 @@ mod test {
         use async_std::test;
 
         #[test]
-        async fn should_remove_waker_on_future_drop() {
-            let int = Observable::new(1);
+        async fn should_remove_waker_after_resolving() {
+            let mut int = Observable::new(1);
             let mut fork = int.clone();
 
             for _ in 0..100 {
+                int.publish(1);
                 timeout(Duration::from_millis(10), fork.next()).await.ok();
 
+                assert_eq!(fork.waker_id, None);
                 assert_eq!(int.waker_count(), 0);
             }
         }
