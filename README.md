@@ -121,5 +121,5 @@ half, wait for something the other task did and then resume.
 <br />
 
 <h6 align="center">
-    _This code was originally published by HUM Systems. This repository continues the development of this library as they sadly stopped their open source efforts._
+    This code was originally published by HUM Systems. This repository continues the development of this library as they sadly stopped their open source efforts.
 </h6>
