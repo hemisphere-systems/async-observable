@@ -116,3 +116,13 @@ you want to kick of something - thats true and the better solution if you just
 want sub tasks. _But if you want to notify a completly different part of your
 program this becomes hard._ Or for example if you want to run a task in
 half, wait for something the other task did and then resume.
+
+
+---
+
+<div align="center" style="font-size: 10px;">
+    <em>
+        This code was originally published by <a href="https://github.com/Hum-Systems">HUM Systems</a>.
+        This repository continues the development of this library as they sadly stopped their open source efforts.
+    </em>
+</div>
