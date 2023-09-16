@@ -118,11 +118,8 @@ program this becomes hard._ Or for example if you want to run a task in
 half, wait for something the other task did and then resume.
 
 
----
+<br />
 
-<div align="center" style="font-size: 10px;">
-    <em>
-        This code was originally published by <a href="https://github.com/Hum-Systems">HUM Systems</a>.
-        This repository continues the development of this library as they sadly stopped their open source efforts.
-    </em>
-</div>
+<h6 align="center">
+    _This code was originally published by HUM Systems. This repository continues the development of this library as they sadly stopped their open source efforts._
+</h6>
