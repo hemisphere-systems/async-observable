@@ -341,7 +341,7 @@ where
 
 impl<T> Observable<T>
 where
-    T: Clone + Eq,
+    T: Clone + PartialEq,
 {
     /// Publish a change if the new value differs from the current one.
     ///
