@@ -52,6 +52,12 @@ use std::{
     task::{Poll, Waker},
 };
 
+/// The initial version of a tracked value
+///
+/// Note: This is 1, to be able to use 0 as an indicator that the
+/// version tracker has been reset.
+const INITIAL_VERSION: u128 = 1;
+
 /// Wraps a value and lets you fork the state to synchronize it between tasks and threads.
 ///
 /// ## Creating New Observables
@@ -115,7 +121,7 @@ where
     pub fn new(value: T) -> Self {
         Observable {
             inner: Arc::new(Mutex::new(Inner::new(value))),
-            version: 0,
+            version: INITIAL_VERSION,
             waker_id: None,
         }
     }
@@ -233,6 +239,22 @@ where
             version: 0,
             waker_id: None,
         }
+    }
+
+    /// Resets the observable to instantly have a change available
+    ///
+    /// ```rust
+    /// # use async_observable::Observable;
+    /// # async {
+    /// let (mut observable, mut fork) = Observable::new(0).split();
+    ///
+    /// fork.reset();
+    ///
+    /// assert_eq!(fork.next().await, 0);
+    /// # };
+    /// ```
+    pub fn reset(&mut self) {
+        self.version = 0;
     }
 
     /// Creates a clone of latest version of the observable value, *without consuming the change!*
@@ -493,7 +515,7 @@ where
 {
     fn new(value: T) -> Self {
         Self {
-            version: 0,
+            version: INITIAL_VERSION,
             value,
             waker: Slab::new(),
         }
@@ -654,6 +676,20 @@ mod test {
             int.publish(3);
             int.publish(0);
             assert_eq!(fork.next().await, 0);
+        }
+
+        #[test]
+        async fn should_clone_and_reset() {
+            let int = Observable::new(1);
+            let mut fork = int.clone_and_reset();
+            assert_eq!(fork.next().await, 1);
+        }
+
+        #[test]
+        async fn should_reset() {
+            let (_int, mut fork) = Observable::new(1).split();
+            fork.reset();
+            assert_eq!(fork.next().await, 1);
         }
     }
 
