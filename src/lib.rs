@@ -107,7 +107,7 @@ pub struct Observable<T>
 where
     T: Clone,
 {
-    uuid: uuid::Uuid,
+    pub uuid: uuid::Uuid,
     inner: Arc<Mutex<Inner<T>>>,
     version: u128,
     waker_id: Option<usize>,
