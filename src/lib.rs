@@ -103,15 +103,28 @@ const INITIAL_VERSION: u128 = 1;
 /// guarantees that all forked observables will receive every change!** But as long as every
 /// observable is constently asking for changes (via `next()`) you are guaranteed that every
 /// observable received the latest version.
-#[derive(Clone)]
 pub struct Observable<T>
 where
     T: Clone,
 {
-    pub uuid: uuid::Uuid,
+    uuid: uuid::Uuid,
     inner: Arc<Mutex<Inner<T>>>,
     version: u128,
     waker_id: Option<usize>,
+}
+
+impl<T> Clone for Observable<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            uuid: uuid::Uuid::new_v4(),
+            inner: self.inner.clone(),
+            version: self.version,
+            waker_id: None,
+        }
+    }
 }
 
 impl<T> Observable<T>
