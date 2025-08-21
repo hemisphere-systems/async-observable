@@ -425,7 +425,9 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        println!("async-observable::stream::preguard");
         let mut guard = self.lock();
+        println!("async-observable::stream::postguard");
         let inner = guard.deref_mut();
 
         if self.version == inner.version {
@@ -439,6 +441,7 @@ where
 
             self.waker_id = Some(waker_id);
 
+            println!("async-observable::stream::pending");
             Poll::Pending
         } else {
             if let Some(waker) = self.waker_id {
@@ -452,6 +455,7 @@ where
             self.waker_id = None;
             self.version = version;
 
+            println!("async-observable::stream::ready");
             Poll::Ready(Some(value))
         }
     }
@@ -463,7 +467,9 @@ where
 {
     fn drop(&mut self) {
         if let Some(waker) = self.waker_id {
+            println!("async-observable::drop::preguard");
             let mut guard = self.lock();
+            println!("async-observable::drop::postguard");
             let inner = guard.deref_mut();
             inner.waker.try_remove(waker);
         }
