@@ -154,6 +154,35 @@ where
         self.modify_conditional(|_| true, modify);
     }
 
+    /// Try to modify the underlying value and notify forks.
+    ///
+    ///
+    pub fn try_modify<M, O, E>(&mut self, modify: M) -> Result<O, E>
+    where
+        M: FnOnce(&mut T) -> Result<O, E>,
+    {
+        self.try_apply(modify)
+    }
+
+    /// Try to map the underlying value and notify forks.
+    ///
+    /// ```rust
+    /// # use async_observable::Observable;
+    /// let mut observable = Observable::new(0);
+    ///
+    /// observable.try_map(|i| Ok(i + 10)).expect();
+    /// assert_eq!(observable.latest(), 10);
+    /// ```
+    pub fn try_map<M, E>(&mut self, map: M) -> Result<(), E>
+    where
+        M: FnOnce(&T) -> Result<T, E>,
+    {
+        self.try_apply(|m| {
+            *m = map(m)?;
+            Ok(())
+        })
+    }
+
     /// If the condition is met, modify the underlying value and notify forks.
     ///
     /// Returns `true` if the modification was executed.
@@ -184,6 +213,32 @@ where
                 false
             }
         })
+    }
+
+    /// Try to apply the change
+    ///
+    #[doc(hidden)]
+    pub(crate) fn try_apply<F, O, E>(&mut self, change: F) -> Result<O, E>
+    where
+        F: FnOnce(&mut T) -> Result<O, E>,
+    {
+        let mut inner = self.lock();
+
+        let result = change(&mut inner.value);
+
+        if let Err(e) = result {
+            return Err(e);
+        }
+
+        inner.version += 1;
+
+        for (_, waker) in inner.waker.iter() {
+            waker.wake();
+        }
+
+        inner.waker.clear();
+
+        result
     }
 
     /// Optionally apply the change retrieved by the provided closure.
@@ -219,21 +274,8 @@ where
     where
         F: FnOnce(&mut T) -> bool,
     {
-        let mut inner = self.lock();
-
-        if !change(&mut inner.value) {
-            return false;
-        }
-
-        inner.version += 1;
-
-        for (_, waker) in inner.waker.iter() {
-            waker.wake();
-        }
-
-        inner.waker.clear();
-
-        true
+        self.try_apply(|m| Result::<bool, ()>::Ok(change(m)))
+            .expect("Try apply with unfailible change function cant error")
     }
 
     /// Same as clone, but *the reset causes the fork to instantly have a change available* with the
