@@ -156,31 +156,27 @@ where
 
     /// Try to modify the underlying value and notify forks.
     ///
+    /// ```rust
+    /// # use async_observable::Observable;
+    /// let mut observable = Observable::new(0);
     ///
+    /// let modify = |i: &mut i32| {
+    ///    if *i == 0 {
+    ///        *i = 10;
+    ///        return Ok(());
+    ///    }
+    ///
+    ///    Err(())
+    /// };
+    ///
+    /// assert_eq!(observable.try_modify(modify), Ok(()));
+    /// assert_eq!(observable.try_modify(modify), Err(()));
+    /// ```
     pub fn try_modify<M, O, E>(&mut self, modify: M) -> Result<O, E>
     where
         M: FnOnce(&mut T) -> Result<O, E>,
     {
         self.try_apply(modify)
-    }
-
-    /// Try to map the underlying value and notify forks.
-    ///
-    /// ```rust
-    /// # use async_observable::Observable;
-    /// let mut observable = Observable::new(0);
-    ///
-    /// observable.try_map(|i| Ok(i + 10)).expect();
-    /// assert_eq!(observable.latest(), 10);
-    /// ```
-    pub fn try_map<M, E>(&mut self, map: M) -> Result<(), E>
-    where
-        M: FnOnce(&T) -> Result<T, E>,
-    {
-        self.try_apply(|m| {
-            *m = map(m)?;
-            Ok(())
-        })
     }
 
     /// If the condition is met, modify the underlying value and notify forks.
@@ -215,8 +211,26 @@ where
         })
     }
 
-    /// Try to apply the change
+    /// Try to apply the change and propagate the error
     ///
+    /// ```ignore
+    /// # use async_observable::Observable;
+    /// #
+    /// # fn test() -> Result<(), ()> {
+    /// let (mut observable, mut shared) = Observable::new(0).split();
+    ///
+    /// observable.try_apply(|1| {
+    ///     *i = 1;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// assert_eq!(observable.try_apply(|_| Err()), Err(()));
+    /// assert_eq!(shared.next().await, 1);
+    /// #     Ok(())
+    /// # }
+    /// #
+    /// # test();
+    /// ```
     #[doc(hidden)]
     pub(crate) fn try_apply<F, O, E>(&mut self, change: F) -> Result<O, E>
     where
@@ -224,11 +238,7 @@ where
     {
         let mut inner = self.lock();
 
-        let result = change(&mut inner.value);
-
-        if let Err(e) = result {
-            return Err(e);
-        }
+        let output = change(&mut inner.value)?;
 
         inner.version += 1;
 
@@ -238,7 +248,7 @@ where
 
         inner.waker.clear();
 
-        result
+        Ok(output)
     }
 
     /// Optionally apply the change retrieved by the provided closure.
