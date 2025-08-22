@@ -17,6 +17,7 @@ license = "MIT"
 [dependencies]
 uuid = { version = "*", features = ["v4"] }
 futures = "0.3"
+futures-util = "0.3"
 slab = "0.4"
 serde = { version = "1", optional = true }
 

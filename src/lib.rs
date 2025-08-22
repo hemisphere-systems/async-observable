@@ -43,14 +43,17 @@
 //!     }
 //! }
 //! ```
-use futures::stream::Stream;
-use slab::Slab;
 use std::{
+    collections::HashMap,
     fmt,
     ops::DerefMut,
     sync::{Arc, Mutex, MutexGuard},
-    task::{Poll, Waker},
+    task::Poll,
 };
+
+use futures::stream::Stream;
+use futures::task::AtomicWaker;
+use uuid::Uuid;
 
 /// The initial version of a tracked value
 ///
@@ -107,10 +110,9 @@ pub struct Observable<T>
 where
     T: Clone,
 {
-    pub uuid: uuid::Uuid,
     inner: Arc<Mutex<Inner<T>>>,
+    waker: u128,
     version: u128,
-    waker_id: Option<usize>,
 }
 
 impl<T> Clone for Observable<T>
@@ -119,10 +121,9 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            uuid: uuid::Uuid::new_v4(),
+            waker: Uuid::new_v4().as_u128(),
             inner: self.inner.clone(),
             version: self.version,
-            waker_id: None,
         }
     }
 }
@@ -134,10 +135,9 @@ where
     /// Create a new observable from any value.
     pub fn new(value: T) -> Self {
         Observable {
-            uuid: uuid::Uuid::new_v4(),
+            waker: Uuid::new_v4().as_u128(),
             inner: Arc::new(Mutex::new(Inner::new(value))),
             version: INITIAL_VERSION,
-            waker_id: None,
         }
     }
 
@@ -227,8 +227,8 @@ where
 
         inner.version += 1;
 
-        for ref waker in inner.waker.iter() {
-            waker.1.wake_by_ref();
+        for (_, waker) in inner.waker.iter() {
+            waker.wake();
         }
 
         inner.waker.clear();
@@ -250,10 +250,9 @@ where
     /// ```
     pub fn clone_and_reset(&self) -> Observable<T> {
         Self {
-            uuid: uuid::Uuid::new_v4(),
+            waker: Uuid::new_v4().as_u128(),
             inner: self.inner.clone(),
             version: 0,
-            waker_id: None,
         }
     }
 
@@ -336,6 +335,7 @@ where
     pub fn synchronize(&mut self) -> T {
         let (value, version) = {
             let inner = self.lock();
+
             (inner.value.clone(), inner.version)
         };
 
@@ -364,7 +364,7 @@ where
         (self.clone(), self)
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<Inner<T>> {
+    pub(crate) fn lock<'a>(&'a self) -> MutexGuard<'a, Inner<T>> {
         match self.inner.lock() {
             Ok(guard) => guard,
             Err(e) => e.into_inner(),
@@ -441,65 +441,36 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        println!(
-            "async-observable::{}::stream::preguard {:#?}",
-            self.uuid, self.waker_id
-        );
         let mut guard = self.lock();
-        println!(
-            "async-observable::{}::stream::postguard {:#?}",
-            self.uuid, self.waker_id
-        );
+
         let inner = guard.deref_mut();
 
         if self.version == inner.version {
-            if let Some(waker) = self.waker_id {
-                inner.waker.try_remove(waker);
-            }
-
-            let waker_id = inner.waker.insert(cx.waker().clone());
+            inner
+                .waker
+                .entry(self.waker)
+                .and_modify(|w| {
+                    w.register(cx.waker());
+                })
+                .or_insert_with(|| {
+                    let waker = AtomicWaker::new();
+                    waker.register(cx.waker());
+                    waker
+                });
 
             drop(guard);
 
-            self.waker_id = Some(waker_id);
-
-            println!(
-                "async-observable::{}::stream::pending (waker = {waker_id}, version = {})",
-                self.uuid, self.version
-            );
             Poll::Pending
         } else {
-            if let Some(waker) = self.waker_id {
-                inner.waker.try_remove(waker);
-            }
+            inner.waker.remove(&self.waker);
 
             let (version, value) = (inner.version, inner.value.clone());
 
             drop(guard);
 
-            self.waker_id = None;
             self.version = version;
 
-            println!(
-                "async-observable::{}::stream::ready, waker none, version = {version}",
-                self.uuid
-            );
             Poll::Ready(Some(value))
-        }
-    }
-}
-
-impl<T> Drop for Observable<T>
-where
-    T: Clone,
-{
-    fn drop(&mut self) {
-        if let Some(waker) = self.waker_id {
-            println!("async-observable::{}::drop::preguard", self.uuid);
-            let mut guard = self.lock();
-            println!("async-observable::{}::drop::postguard", self.uuid);
-            let inner = guard.deref_mut();
-            inner.waker.try_remove(waker);
         }
     }
 }
@@ -540,7 +511,7 @@ where
 {
     version: u128,
     value: T,
-    waker: Slab<Waker>,
+    waker: HashMap<u128, AtomicWaker>,
 }
 
 impl<T> Inner<T>
@@ -551,7 +522,7 @@ where
         Self {
             version: INITIAL_VERSION,
             value,
-            waker: Slab::new(),
+            waker: Default::default(),
         }
     }
 }
@@ -802,9 +773,26 @@ mod test {
 
     mod future {
         use super::*;
-        use async_std::test;
+        use futures::task::{noop_waker, Context};
+        use futures::Stream;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicU16, Ordering};
+        use std::sync::Arc;
+        use std::task::Poll;
+        use std::thread;
+        use std::time::Duration;
 
-        #[test]
+        struct TestWaker {
+            called: Arc<AtomicU16>,
+        }
+
+        impl futures::task::ArcWake for TestWaker {
+            fn wake_by_ref(arc_self: &Arc<Self>) {
+                arc_self.called.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        #[async_std::test]
         async fn should_remove_waker_after_resolving() {
             let mut int = Observable::new(1);
             let mut fork = int.clone();
@@ -813,17 +801,114 @@ mod test {
                 int.publish(1);
                 timeout(Duration::from_millis(10), fork.next()).await.ok();
 
-                assert_eq!(fork.waker_id, None);
+                //assert_eq!(fork.waker_id, None);
                 assert_eq!(int.waker_count(), 0);
             }
         }
 
-        #[test]
+        #[async_std::test]
         async fn should_wait_forever() {
             let int = Observable::new(1);
             let mut fork = int.clone();
 
             assert!(timeout(TIMEOUT_DURATION, fork.next()).await.is_err());
+        }
+
+        #[test]
+        fn supports_multiple_polls_before_data() {
+            let mut observable = Observable::new(0);
+            let mut fork = observable.clone();
+
+            let called = Arc::new(AtomicU16::new(0));
+
+            let waker = futures::task::waker(Arc::new(TestWaker {
+                called: called.clone(),
+            }));
+            let mut cx = Context::from_waker(&waker);
+
+            let poll1 = Pin::new(&mut fork).poll_next(&mut cx);
+            assert_eq!(poll1, Poll::Pending);
+            assert_eq!(fork.waker_count(), 1);
+
+            let poll2 = Pin::new(&mut fork).poll_next(&mut cx);
+            assert_eq!(poll2, Poll::Pending);
+            assert_eq!(fork.waker_count(), 1);
+
+            let poll3 = Pin::new(&mut fork).poll_next(&mut cx);
+            assert_eq!(poll3, Poll::Pending);
+            assert_eq!(fork.waker_count(), 1);
+
+            observable.publish(42);
+
+            assert_eq!(
+                called.load(Ordering::SeqCst),
+                1,
+                "Waker was not called after publishing data!"
+            );
+
+            called.store(0, Ordering::SeqCst);
+
+            let poll4 = Pin::new(&mut fork).poll_next(&mut cx);
+            assert_eq!(poll4, Poll::Ready(Some(42)));
+            assert_eq!(fork.waker_count(), 0);
+        }
+
+        #[test]
+        fn supports_waker_survival_across_multiple_polls() {
+            let mut observable = Observable::new(0);
+            let mut fork = observable.clone();
+
+            let waker = noop_waker();
+            let mut cx = Context::from_waker(&waker);
+
+            for i in 0..10 {
+                let poll = Pin::new(&mut fork).poll_next(&mut cx);
+                assert_eq!(poll, Poll::Pending, "Poll {} should return Pending", i);
+
+                assert_eq!(
+                    fork.waker_count(),
+                    1,
+                    "Should have exactly 1 waker after poll {}",
+                    i
+                );
+            }
+
+            observable.publish(99);
+
+            let last = Pin::new(&mut fork).poll_next(&mut cx);
+            assert_eq!(last, Poll::Ready(Some(99)));
+        }
+
+        #[async_std::test]
+        async fn supports_concurrent_poll_and_publish() {
+            let mut observable = Observable::new(0);
+            let mut fork = observable.clone();
+
+            let called = Arc::new(AtomicU16::new(0));
+
+            let waker = futures::task::waker(Arc::new(TestWaker {
+                called: called.clone(),
+            }));
+
+            let handle = async_std::task::spawn(async move {
+                for _ in 0..100 {
+                    {
+                        let mut cx = Context::from_waker(&waker);
+                        let _ = Pin::new(&mut fork).poll_next(&mut cx);
+                    }
+                    async_std::task::sleep(Duration::from_millis(1)).await;
+                }
+                fork
+            });
+
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(25));
+                observable.publish(123);
+            });
+
+            handle.await;
+
+            assert_eq!(called.load(Ordering::SeqCst), 1);
         }
     }
 
