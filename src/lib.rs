@@ -284,8 +284,14 @@ where
     where
         F: FnOnce(&mut T) -> bool,
     {
-        self.try_apply(|m| Result::<bool, ()>::Ok(change(m)))
-            .expect("Try apply with unfailible change function cant error")
+        self.try_apply(|m| {
+            if change(m) {
+                return Ok(());
+            }
+
+            Err(())
+        })
+        .is_ok()
     }
 
     /// Same as clone, but *the reset causes the fork to instantly have a change available* with the
@@ -392,6 +398,7 @@ where
         };
 
         self.version = version;
+
         value
     }
 
