@@ -238,8 +238,11 @@ where
     {
         let mut inner = self.lock();
 
-        let output = change(&mut inner.value)?;
+        let mut value = inner.value.clone();
 
+        let output = change(&mut value)?;
+
+        inner.value = value;
         inner.version += 1;
 
         for (_, waker) in inner.waker.iter() {
