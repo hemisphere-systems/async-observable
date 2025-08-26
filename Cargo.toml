@@ -15,7 +15,7 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-uuid = { version = "*", features = ["v4"] }
+uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
 serde = { version = "1", optional = true }
 
