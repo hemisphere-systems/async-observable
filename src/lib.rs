@@ -154,6 +154,31 @@ where
         self.modify_conditional(|_| true, modify);
     }
 
+    /// Try to modify the underlying value and notify forks.
+    ///
+    /// ```rust
+    /// # use async_observable::Observable;
+    /// let mut observable = Observable::new(0);
+    ///
+    /// let modify = |i: &mut i32| {
+    ///    if *i == 0 {
+    ///        *i = 10;
+    ///        return Ok(());
+    ///    }
+    ///
+    ///    Err(())
+    /// };
+    ///
+    /// assert_eq!(observable.try_modify(modify), Ok(()));
+    /// assert_eq!(observable.try_modify(modify), Err(()));
+    /// ```
+    pub fn try_modify<M, O, E>(&mut self, modify: M) -> Result<O, E>
+    where
+        M: FnOnce(&mut T) -> Result<O, E>,
+    {
+        self.try_apply(modify)
+    }
+
     /// If the condition is met, modify the underlying value and notify forks.
     ///
     /// Returns `true` if the modification was executed.
@@ -184,6 +209,49 @@ where
                 false
             }
         })
+    }
+
+    /// Try to apply the change and propagate the error
+    ///
+    /// ```ignore
+    /// # use async_observable::Observable;
+    /// #
+    /// # fn test() -> Result<(), ()> {
+    /// let (mut observable, mut shared) = Observable::new(0).split();
+    ///
+    /// observable.try_apply(|1| {
+    ///     *i = 1;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// assert_eq!(observable.try_apply(|_| Err()), Err(()));
+    /// assert_eq!(shared.next().await, 1);
+    /// #     Ok(())
+    /// # }
+    /// #
+    /// # test();
+    /// ```
+    #[doc(hidden)]
+    pub(crate) fn try_apply<F, O, E>(&mut self, change: F) -> Result<O, E>
+    where
+        F: FnOnce(&mut T) -> Result<O, E>,
+    {
+        let mut inner = self.lock();
+
+        let mut value = inner.value.clone();
+
+        let output = change(&mut value)?;
+
+        inner.value = value;
+        inner.version += 1;
+
+        for (_, waker) in inner.waker.iter() {
+            waker.wake();
+        }
+
+        inner.waker.clear();
+
+        Ok(output)
     }
 
     /// Optionally apply the change retrieved by the provided closure.
@@ -219,21 +287,14 @@ where
     where
         F: FnOnce(&mut T) -> bool,
     {
-        let mut inner = self.lock();
+        self.try_apply(|m| {
+            if change(m) {
+                return Ok(());
+            }
 
-        if !change(&mut inner.value) {
-            return false;
-        }
-
-        inner.version += 1;
-
-        for (_, waker) in inner.waker.iter() {
-            waker.wake();
-        }
-
-        inner.waker.clear();
-
-        true
+            Err(())
+        })
+        .is_ok()
     }
 
     /// Same as clone, but *the reset causes the fork to instantly have a change available* with the
@@ -340,6 +401,7 @@ where
         };
 
         self.version = version;
+
         value
     }
 
